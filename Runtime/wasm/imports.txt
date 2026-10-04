@@ -1,0 +1,10 @@
+agb_host_present
+agb_host_wait_frame
+agb_host_keys
+agb_host_audio
+agb_host_load_save
+agb_host_store_save
+agb_host_log
+agb_host_fatal
+agb_host_debug_frame
+agb_host_debug_dump
