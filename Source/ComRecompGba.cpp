@@ -11,6 +11,7 @@
 #include "Plugins/PolyphaseEngineAPI.h"
 
 #include "GbaPlayer.h"
+#include "GbaProvider.h"
 
 static PolyphaseEngineAPI* sEngineAPI = nullptr;
 
@@ -19,6 +20,8 @@ static int OnLoad(PolyphaseEngineAPI* api)
     sEngineAPI = api;
     GbaPlayer::SetEngineAPI(api);
     FORCE_LINK_CALL(GbaPlayer);
+    // com.recomp.mod.base (mod settings, Recomp / Mods Lua, Mods windows) sees the game
+    Recomp_RegisterProvider(&GbaProvider::Get());
     if (api && api->LogDebug)
     {
         api->LogDebug("com.recomp.gba loaded!");
@@ -30,6 +33,7 @@ static void OnUnload()
 {
     // Game processes are driven by this module's node instances: stop them first.
     GbaPlayer::ShutdownAll();
+    Recomp_UnregisterProvider(&GbaProvider::Get());
     GbaPlayer::SetEngineAPI(nullptr);
     if (sEngineAPI && sEngineAPI->LogDebug)
     {

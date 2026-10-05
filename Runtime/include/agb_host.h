@@ -24,6 +24,15 @@ void agb_host_store_save(const unsigned char *data, int size);
  * bytes at `offset`, returns the number read. Not used by the native guest. */
 int agb_host_read_data(unsigned offset, void *dst, unsigned size);
 void agb_host_log(const char *line);
+/* Script bridge (agb_bridge.h, game thread, once per frame from agb_bridge_pump):
+ * the variable / request descriptions (tab-separated "name type count stride help" lines
+ * and "name help" lines), every frame's copy of the variables' bytes, and the requests the
+ * host queued: poll returns a request id (> 0) with its name and integer arguments, or 0;
+ * done reports its result. */
+void agb_host_bridge_publish(const char *vars, const char *requests);
+void agb_host_bridge_values(const void *data, unsigned size);
+int agb_host_bridge_poll(char *name, unsigned name_cap, int *args, int max_args, int *nargs);
+void agb_host_bridge_done(int id, int result);
 /* Debugging: the frame whose hardware state should be dumped (-1: none), and the dump of
  * one memory region of it (the host writes it to a file). */
 int agb_host_debug_frame(void);

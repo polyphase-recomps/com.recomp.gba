@@ -3,6 +3,9 @@
     "author": "",
     "description": "Shared runtime for native GBA ports: hardware replacement, build tools and the GbaPlayer node that plays a decompiled game in Polyphase.",
     "version": "1.0.0",
+    "dependencies": {
+        "com.recomp.mod.base": "https://github.com/polyphase-recomps/com.recomp.mod.base"
+    },
     "native": {
         "target": "engine",
         "sourceDir": "Source",

@@ -123,6 +123,147 @@ static void host_log(const char *fmt, ...)
     agb_host_log(buf);
 }
 
+/* ---- script bridge (agb_bridge.h) ------------------------------------------------------
+ * Child-process mode: through the shared memory's bridge region (GbaPlayer reads it).
+ * Headless tests: --bridge logs the variables every 600 frames, --bridge-request
+ * F:name:a,b,... queues a request at frame F (results go to the log). */
+static int sBridgeLog;
+#define MAX_BRIDGE_SCRIPT 16
+static struct { int frame; char name[56]; int args[8]; int nargs; int sent; } sBridgeScript[MAX_BRIDGE_SCRIPT];
+static int sBridgeScriptCount;
+static char sBridgeVars[PORT_SHM_BRIDGE_VARS];
+
+static void parse_bridge_request(const char *text)
+{
+    char *end;
+    int n;
+
+    if (sBridgeScriptCount >= MAX_BRIDGE_SCRIPT) return;
+    sBridgeScript[sBridgeScriptCount].frame = (int)strtol(text, &end, 10);
+    if (*end != ':') return;
+    text = end + 1;
+    for (n = 0; *text && *text != ':' && n < 55; n++) sBridgeScript[sBridgeScriptCount].name[n] = *text++;
+    sBridgeScript[sBridgeScriptCount].name[n] = 0;
+    while (*text == ':' || *text == ',')
+    {
+        if (sBridgeScript[sBridgeScriptCount].nargs >= 8) break;
+        sBridgeScript[sBridgeScriptCount].args[sBridgeScript[sBridgeScriptCount].nargs++] = (int)strtol(text + 1, &end, 0);
+        text = end;
+    }
+    sBridgeScriptCount++;
+}
+
+void agb_host_bridge_publish(const char *vars, const char *requests)
+{
+    snprintf(sBridgeVars, sizeof(sBridgeVars), "%s", vars);
+    if (sBridgeLog) host_log("bridge: published variables:\n%s requests:\n%s", vars, requests);
+    if (!sShm) return;
+    InterlockedIncrement((volatile LONG *)&sShm->bridge_desc_seq); /* odd: writing */
+    snprintf(sShm->bridge_vars, sizeof(sShm->bridge_vars), "%s", vars);
+    snprintf(sShm->bridge_reqs, sizeof(sShm->bridge_reqs), "%s", requests);
+    InterlockedIncrement((volatile LONG *)&sShm->bridge_desc_seq);
+}
+
+/* the first element of each scalar variable, for --bridge */
+static void log_values(const unsigned char *data, unsigned size)
+{
+    char line[1024];
+    const char *p = sBridgeVars;
+    unsigned at = 0;
+    int len = 0;
+
+    while (*p && at <= size)
+    {
+        char name[64];
+        int type = 0, count = 0, stride = 0, n = 0, bytes, elem;
+
+        while (*p && *p != '\t' && n < 63) name[n++] = *p++;
+        name[n] = 0;
+        if (*p == '\t') type = (int)strtol(p + 1, (char **)&p, 10);
+        if (*p == '\t') count = (int)strtol(p + 1, (char **)&p, 10);
+        if (*p == '\t') stride = (int)strtol(p + 1, (char **)&p, 10);
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+        elem = (type == 1 || type == 2 || type == 7) ? 1 : (type == 3 || type == 4) ? 2 : 4;
+        bytes = type == 7 ? (stride ? count * stride : count) : count * elem;
+        if (at + (unsigned)bytes > size) break;
+        if (type != 7 && len < (int)sizeof(line) - 80)
+        {
+            const unsigned char *b = data + at;
+            long v = elem == 1 ? (type == 2 ? (signed char)b[0] : b[0])
+                   : elem == 2 ? (type == 4 ? (short)(b[0] | b[1] << 8) : (b[0] | b[1] << 8))
+                               : (long)(int)(b[0] | b[1] << 8 | b[2] << 16 | (unsigned)b[3] << 24);
+            len += snprintf(line + len, sizeof(line) - len, "%s=%ld ", name, v);
+        }
+        at += (unsigned)bytes;
+    }
+    host_log("bridge: frame %u: %s", sFrameNo, line);
+}
+
+void agb_host_bridge_values(const void *data, unsigned size)
+{
+    if (sBridgeLog && sFrameNo % 600 == 0) log_values((const unsigned char *)data, size);
+    if (!sShm) return;
+    if (size > PORT_SHM_BRIDGE_VALUES) size = PORT_SHM_BRIDGE_VALUES;
+    InterlockedIncrement((volatile LONG *)&sShm->bridge_values_seq); /* odd: writing */
+    memcpy(sShm->bridge_values, data, size);
+    sShm->bridge_values_size = size;
+    InterlockedIncrement((volatile LONG *)&sShm->bridge_values_seq);
+}
+
+int agb_host_bridge_poll(char *name, unsigned name_cap, int *args, int max_args, int *nargs)
+{
+    int i;
+
+    if (!sShm)
+    {
+        for (i = 0; i < sBridgeScriptCount; i++)
+        {
+            if (!sBridgeScript[i].sent && (int)sFrameNo >= sBridgeScript[i].frame)
+            {
+                int k;
+                sBridgeScript[i].sent = 1;
+                snprintf(name, name_cap, "%s", sBridgeScript[i].name);
+                *nargs = sBridgeScript[i].nargs < max_args ? sBridgeScript[i].nargs : max_args;
+                for (k = 0; k < *nargs; k++) args[k] = sBridgeScript[i].args[k];
+                return 1000 + i;
+            }
+        }
+        return 0;
+    }
+    {
+        const unsigned r = sShm->bridge_req_read;
+        const PortShmBridgeCall *call;
+        int k;
+
+        if (r == sShm->bridge_req_write) return 0;
+        call = &sShm->bridge_req[r % PORT_SHM_BRIDGE_QUEUE];
+        snprintf(name, name_cap, "%.*s", PORT_SHM_BRIDGE_NAME, call->name);
+        *nargs = call->nargs < max_args ? call->nargs : max_args;
+        for (k = 0; k < *nargs; k++) args[k] = call->args[k];
+        i = (int)call->id;
+        MemoryBarrier();
+        sShm->bridge_req_read = r + 1;
+        return i;
+    }
+}
+
+void agb_host_bridge_done(int id, int result)
+{
+    if (!sShm)
+    {
+        host_log("bridge: request %d -> %d", id, result);
+        return;
+    }
+    {
+        const unsigned w = sShm->bridge_res_write;
+        sShm->bridge_res[w % PORT_SHM_BRIDGE_RESULTS].id = (unsigned)id;
+        sShm->bridge_res[w % PORT_SHM_BRIDGE_RESULTS].result = result;
+        MemoryBarrier();
+        sShm->bridge_res_write = w + 1;
+    }
+}
+
 void agb_host_fatal(const char *line)
 {
     host_log("FATAL: %s", line);
@@ -935,6 +1076,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--dump-state") && i + 1 < argc) sDebugFrame = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--data") && i + 1 < argc) snprintf(sDataPath, sizeof(sDataPath), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--log") && i + 1 < argc) sLogFile = fopen(argv[++i], "w");
+        else if (!strcmp(argv[i], "--bridge")) sBridgeLog = 1;
+        else if (!strcmp(argv[i], "--bridge-request") && i + 1 < argc) parse_bridge_request(argv[++i]);
         else
         {
             fprintf(stderr, "usage: %s [--scale N] [--headless --frames N [--dump dir] [--every N] [--script F:HEX[:DUR],...] "

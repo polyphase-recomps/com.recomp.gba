@@ -1,5 +1,5 @@
 /*
- * Shared memory between dw.exe (32-bit game process) and the Polyphase addon
+ * Shared memory between the game process (32-bit native exe) and the Polyphase addon
  * (64-bit, inside the editor). Fixed-size types only: both sides must agree on
  * the layout regardless of pointer size.
  */
@@ -18,6 +18,28 @@
 #define PORT_SHM_CMD_NONE 0
 #define PORT_SHM_CMD_QUIT 1
 
+/* script bridge (agb_bridge.h) in child-process mode */
+#define PORT_SHM_BRIDGE_VARS 16384
+#define PORT_SHM_BRIDGE_REQS 4096
+#define PORT_SHM_BRIDGE_VALUES 32768
+#define PORT_SHM_BRIDGE_QUEUE 16
+#define PORT_SHM_BRIDGE_RESULTS 64
+#define PORT_SHM_BRIDGE_NAME 56
+
+typedef struct PortShmBridgeCall
+{
+    unsigned int id;
+    int nargs;
+    int args[8];
+    char name[PORT_SHM_BRIDGE_NAME];
+} PortShmBridgeCall;
+
+typedef struct PortShmBridgeResult
+{
+    unsigned int id;
+    int result;
+} PortShmBridgeResult;
+
 typedef struct PortShm
 {
     volatile unsigned int status;       /* written by the game */
@@ -32,6 +54,22 @@ typedef struct PortShm
     unsigned int reserved[6];
     unsigned char frames[2][PORT_SHM_MAX_W * PORT_SHM_MAX_H * 4]; /* RGBA8 */
     short audio[PORT_SHM_AUDIO_FRAMES * 2]; /* 44100 Hz stereo ring */
+
+    /* Script bridge. Texts and values are written by the game under a sequence number
+     * that is odd while it writes (read, copy, re-read the number, retry if it moved).
+     * Requests: a ring the addon writes (req_write) and the game consumes (req_read);
+     * results: a ring the game writes, the addon keeps its own read position. */
+    volatile unsigned int bridge_desc_seq;
+    volatile unsigned int bridge_values_seq;
+    volatile unsigned int bridge_values_size;
+    volatile unsigned int bridge_req_write;
+    volatile unsigned int bridge_req_read;
+    volatile unsigned int bridge_res_write;
+    char bridge_vars[PORT_SHM_BRIDGE_VARS];
+    char bridge_reqs[PORT_SHM_BRIDGE_REQS];
+    unsigned char bridge_values[PORT_SHM_BRIDGE_VALUES];
+    PortShmBridgeCall bridge_req[PORT_SHM_BRIDGE_QUEUE];
+    PortShmBridgeResult bridge_res[PORT_SHM_BRIDGE_RESULTS];
 } PortShm;
 
 #endif /* PORT_SHM_H */

@@ -3,6 +3,7 @@
  * @brief In-process host of a wasm2c GBA guest (see GbaGuestRunner.h).
  */
 #include "GbaGuestRunner.h"
+#include "GbaBridge.h"
 
 #include "Log.h"
 #include "System/System.h"
@@ -207,6 +208,13 @@ void GbaGuestRunner::Run()
     host.store_save = HostStoreSave;
     host.read_data = HostReadData;
     host.log = HostLog;
+    // script bridge: straight into GbaBridge (thread-safe), read by GbaProvider
+    host.bridge_publish = [](void*, const char* vars, const char* requests) { GbaBridge::Publish(vars, requests); };
+    host.bridge_values = [](void*, const void* data, uint32_t size) { GbaBridge::SetValues(data, size); };
+    host.bridge_poll = [](void*, char* name, uint32_t cap, int* args, int maxArgs, int* nargs) {
+        return GbaBridge::Poll(name, cap, args, maxArgs, nargs);
+    };
+    host.bridge_done = [](void*, int id, int result) { GbaBridge::Done(id, result); };
     mExitCode = mGuest->run(&host);
     if (mExitCode != 0)
     {

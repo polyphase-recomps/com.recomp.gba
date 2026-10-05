@@ -437,3 +437,65 @@ void agbw_watch_store(u64 addr, u32 size, u64 value)
     agb_host_debug_backtrace();
 }
 #endif
+
+/* ---- script bridge (agb_bridge.h) ---------------------------------------------------- */
+static const char *guest_text(u32 addr, char *buf, u32 cap)
+{
+    u32 i;
+
+    for (i = 0; i + 1 < cap; i++)
+    {
+        buf[i] = (char)*guest_ptr(addr + i, 1);
+        if (!buf[i]) break;
+    }
+    buf[i] = 0;
+    return buf;
+}
+
+/* guest memory is little-endian on every host */
+static void guest_put32(u32 addr, u32 value)
+{
+    unsigned char *p = guest_ptr(addr, 4);
+
+    p[0] = (unsigned char)value;
+    p[1] = (unsigned char)(value >> 8);
+    p[2] = (unsigned char)(value >> 16);
+    p[3] = (unsigned char)(value >> 24);
+}
+
+void w2c_env_agb_host_bridge_publish(struct w2c_env *env, u32 vars, u32 requests)
+{
+    static char varText[16384], reqText[4096];
+
+    (void)env;
+    agb_host_bridge_publish(guest_text(vars, varText, sizeof(varText)), guest_text(requests, reqText, sizeof(reqText)));
+}
+
+void w2c_env_agb_host_bridge_values(struct w2c_env *env, u32 data, u32 size)
+{
+    (void)env;
+    agb_host_bridge_values(size ? guest_ptr(data, size) : (const void *)0, size);
+}
+
+u32 w2c_env_agb_host_bridge_poll(struct w2c_env *env, u32 name, u32 name_cap, u32 args, u32 max_args, u32 nargs)
+{
+    char text[64];
+    int values[8];
+    int count = 0, id, i;
+    const int max = max_args > 8 ? 8 : (int)max_args;
+
+    (void)env;
+    id = agb_host_bridge_poll(text, sizeof(text), values, max, &count);
+    if (id <= 0) return 0;
+    for (i = 0; (u32)i + 1 < name_cap && text[i]; i++) *guest_ptr(name + (u32)i, 1) = (unsigned char)text[i];
+    if (name_cap) *guest_ptr(name + (u32)i, 1) = 0;
+    for (i = 0; i < count; i++) guest_put32(args + (u32)i * 4u, (u32)values[i]);
+    guest_put32(nargs, (u32)count);
+    return (u32)id;
+}
+
+void w2c_env_agb_host_bridge_done(struct w2c_env *env, u32 id, u32 result)
+{
+    (void)env;
+    agb_host_bridge_done((int)id, (int)result);
+}

@@ -138,3 +138,14 @@ if(WIN32)
         "${POLYPHASE_DEV_LUA_PATH}")
     target_link_libraries(com.recomp.gba PRIVATE Polyphase Lua)
 endif()
+
+# com.recomp.mod.base (package.json dependency): the editor builds and links it itself;
+# this standalone check build does the same.
+set(MODBASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../com.recomp.mod.base")
+if(EXISTS "${MODBASE_DIR}/CMakeLists.txt")
+    add_subdirectory("${MODBASE_DIR}" modbase)
+    target_include_directories(com.recomp.gba PRIVATE "${MODBASE_DIR}/Source")
+    target_link_libraries(com.recomp.gba PRIVATE com.recomp.mod.base)
+else()
+    message(FATAL_ERROR "com.recomp.mod.base not found next to com.recomp.gba (Packages/com.recomp.mod.base)")
+endif()

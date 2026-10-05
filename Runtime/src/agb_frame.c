@@ -9,6 +9,7 @@
  */
 #include "agb.h"
 #include "agb_dma.h"
+#include "agb_bridge.h"
 #include "agb_host.h"
 #include "agb_internal.h"
 
@@ -174,6 +175,7 @@ static void run_frame(int force_irqs)
         }
     }
 
+    agb_bridge_pump(); /* script bridge: requests run here, between two frames */
     agb_host_present(sFrame);
     sFrames++;
     agb_host_wait_frame();

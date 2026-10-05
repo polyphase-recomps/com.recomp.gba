@@ -8,3 +8,7 @@ agb_host_log
 agb_host_fatal
 agb_host_debug_frame
 agb_host_debug_dump
+agb_host_bridge_publish
+agb_host_bridge_values
+agb_host_bridge_poll
+agb_host_bridge_done

@@ -95,3 +95,65 @@ A+B+Select+Start, which soft-resets the game every frame.
 Share the patch files and any `Native/game/*.c` you added. They're source code against the
 decomp and hold none of the game. Don't share the built exe, `Source/Guest/`, `*.agbdata` or
 anything from the decomp's `assets/`. Those are made from the ROM.
+
+## Script bridge: what Polyphase sees of the game
+
+The GBA runtime has a script bridge like the other recomp runtimes
+(`Runtime/include/agb_bridge.h`). A game publishes tables of variables and requests once,
+e.g. from its glue:
+
+```c
+#include "agb_bridge.h"
+
+static int heal(const int *args, int nargs) { gGameState.hp = gGameState.progression.maxHp; return gGameState.hp; }
+
+static const AgbBridgeVar kVars[] = {
+    { "hp", &gGameState.hp, AGB_VAR_S16, 1, 0, "Sora's current HP" },
+};
+static const AgbBridgeRequest kRequests[] = { { "heal", heal, "restore HP" } };
+
+void my_bridge_init(void) { agb_bridge_add(kVars, 1, kRequests, 1); }
+```
+
+The runtime pumps it once per frame, on the game's thread (`agb_frame.c`):
+
+- requests run there, including the built-in `set <name>` value[, index];
+- a copy of every variable's bytes goes to the host.
+
+The host never touches game memory, so the same works in both of GbaPlayer's modes:
+
+- **packaged builds:** the wasm2c guest in-process, through `AgbHostApi` v2 bridge
+  callbacks (`AGB_GUEST_API_VERSION` 2: guests published before it must be rebuilt with
+  `build.ps1 -Guest wasm`);
+- **the editor:** the native executable as a child process, through the bridge region at
+  the end of `PortShm`. Rebuild the exe and the addon together: the struct grew.
+
+Host side: `Source/GbaBridge.*` (state, both modes), `Source/GbaProvider.cpp`
+(com.recomp.mod.base).
+
+Headless test: `khcom.exe --headless --frames N --bridge --bridge-request F:name:a,b`:
+
+- `--bridge` logs the variables every 600 frames;
+- `--bridge-request` queues a request at frame F and logs its result.
+
+## Mod settings menu, `Recomp` / `Mods` Lua, resolution scaler
+
+The mod layer every recomp runtime shares is **com.recomp.mod.base** (a dependency of this
+package; see its README):
+
+- **Tools > Recomp > Mods > Mod Map Editor**: a Mod Map (asset) lists what players can
+  change or watch. **Import...** fills it from the running game, or without running
+  anything from the bridge tables in the game package's `Native/` sources.
+- **Tools > Recomp > Mods > Generate Mod Settings Scene...**: a gamepad settings menu built
+  from the map (tabs per group, Save / Reset / Close, Display page). Generating again
+  updates it and keeps your edits.
+- At runtime the player's choices are written to the game, kept ("lock" entries) and
+  saved (`Saves/<name>.mods`, GameCube memory card).
+- Lua `Recomp.*` works on any runtime; `Mods.*` reads and changes the settings.
+- The player node places its picture with the shared **resolution scaler**: Fit
+  (the console's real shape), Integer, Native, Full Screen, Scale ×N, sharp / smooth, and
+  window sizes on Windows.
+- **Tools > Recomp > Mods > Live Variables** shows and edits the running game's
+  variables: handy for finding cheats.
+
+On GBA the scaler shows the 3:2 picture (Fit, or Integer for sharp pixels).

@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define AGB_GUEST_API_VERSION 1
+#define AGB_GUEST_API_VERSION 2 /* 2: script bridge callbacks */
 
 /* What the game needs from the player (agb_host.h); called on the game's thread. */
 typedef struct AgbHostApi
@@ -40,6 +40,12 @@ typedef struct AgbHostApi
     /* the game data file (AgbGuestDesc.data_file in the package's Assets folder) */
     int (*read_data)(void* user, uint32_t offset, void* dst, uint32_t size);
     void (*log)(void* user, const char* line);
+    /* script bridge (agb_bridge.h / agb_host.h), game thread, once per frame: the variable
+     * and request descriptions, the variables' bytes, queued requests and their results */
+    void (*bridge_publish)(void* user, const char* vars, const char* requests);
+    void (*bridge_values)(void* user, const void* data, uint32_t size);
+    int (*bridge_poll)(void* user, char* name, uint32_t name_cap, int* args, int max_args, int* nargs);
+    void (*bridge_done)(void* user, int id, int result);
 } AgbHostApi;
 
 typedef struct AgbGuestDesc

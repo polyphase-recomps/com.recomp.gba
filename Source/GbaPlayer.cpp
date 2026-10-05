@@ -7,7 +7,14 @@
 #include "GbaPlayer.h"
 
 #include "AgbGuestApi.h"
+#include "GbaBridge.h"
 #include "GbaGuestRunner.h"
+#include "GbaProvider.h"
+
+// com.recomp.mod.base: mod settings, resolution scaler, shared menus
+#include "ModBaseDisplay.h"
+#include "ModBaseProvider.h"
+#include "ModBaseSettings.h"
 
 #include "AssetManager.h"
 #include "Engine.h"
@@ -273,11 +280,30 @@ static bool ListHas(const std::string& list, const char* item)
     return false;
 }
 
+// An open settings menu (RecompMenuController) navigates with the gamepad: the game gets
+// no keys, and not the press that closes it either.
+static unsigned int GameKeys(unsigned int keys)
+{
+    static bool sHoldUntilRelease = false;
+    if (Recomp_IsInputCaptured())
+    {
+        sHoldUntilRelease = true;
+    }
+    else if (sHoldUntilRelease && keys == 0)
+    {
+        sHoldUntilRelease = false;
+    }
+    return sHoldUntilRelease ? 0u : keys;
+}
+
 // ---- which way to run ------------------------------------------------------------------
 bool GbaPlayer::StartGame()
 {
     std::string exePath, saveDir, native;
     ResolveGameDefaults(exePath, saveDir, &native);
+    // the script bridge starts empty: the game publishes once it runs
+    GbaBridge::Reset();
+    GbaProvider::Get().SetGame(mGame);
     if (saveDir.empty())
     {
         saveDir = "Saves/" + (mGame.empty() ? std::string("gba") : mGame);
@@ -301,6 +327,8 @@ void GbaPlayer::StopGame()
     }
     StopProcess();
     mStartAttempted = false;
+    GbaProvider::Get().SetRunning(false);
+    GbaBridge::Reset();
 }
 
 static void CreateDirs(const std::string& path)
@@ -351,7 +379,8 @@ void GbaPlayer::TickGuest(float deltaTime)
         }
         return;
     }
-    mRunner->SetKeys(ReadKeys());
+    mRunner->SetKeys(GameKeys(ReadKeys()));
+    GbaProvider::Get().SetRunning(true);
     mRunner->Advance(deltaTime);
     if (mRunner->TakeFrame(mGuestFrame.data()))
     {
@@ -644,7 +673,7 @@ void GbaPlayer::UpdateDisplayTexture(const uint8_t* pixels, unsigned int width, 
         texture = NewTransientAsset<Texture>();
         texture->SetName("T_GbaFrame");
         texture->SetMipmapped(false);
-        texture->SetFilterType(FilterType::Nearest);
+        texture->SetFilterType(Recomp_DisplayFilterLinear() ? FilterType::Linear : FilterType::Nearest);
         texture->SetWrapMode(WrapMode::Clamp);
         texture->Init(width, height, (uint8_t*)pixels);
         texture->Create();
@@ -655,8 +684,16 @@ void GbaPlayer::UpdateDisplayTexture(const uint8_t* pixels, unsigned int width, 
     {
         quad->SetTexture(texture);
         quad->SetVisible(true);
+        // the resolution scaler (mod settings "Screen" / "Filter"): the GBA's 3:2 picture;
+        // a Quad the user bound keeps the layout they gave it
+        if (quad == mDisplayQuad &&
+            Recomp_DisplayApply(quad, texture, (int)width, (int)height, 3.0f / 2.0f))
+        {
+            mFrameTexture = nullptr; // filter changed: a new texture next frame
+        }
     }
     texture->UpdatePixels(pixels, size_t(width) * size_t(height) * 4);
+    Recomp_DisplayApplyWindow((int)width, (int)height);
 }
 
 void GbaPlayer::Tick(float deltaTime)
@@ -668,6 +705,8 @@ void GbaPlayer::Tick(float deltaTime)
         mStartAttempted = true;
         StartGame();
     }
+    // mod settings: written to the game once it runs, kept, saved
+    ModSettings::Get().Tick(&GbaProvider::Get());
     if (mRunner)
     {
         TickGuest(deltaTime);
@@ -691,7 +730,10 @@ void GbaPlayer::TickProcess()
         return;
     }
 
-    mShm->pad = ReadKeys();
+    mShm->pad = GameKeys(ReadKeys());
+    // script bridge: the game's variables in, our requests out
+    GbaBridge::SyncShm(mShm);
+    GbaProvider::Get().SetRunning(mShm->status == PORT_SHM_STATUS_RUNNING);
 
     const unsigned int serial = mShm->frame_serial;
     if (serial != mLastSerial)

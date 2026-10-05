@@ -104,3 +104,24 @@ void agb_host_debug_dump(const char *name, const void *data, unsigned size)
 void agb_host_debug_backtrace(void)
 {
 }
+
+/* script bridge: to the player (AgbHostApi v2) */
+void agb_host_bridge_publish(const char *vars, const char *requests)
+{
+    if (sHost->bridge_publish) sHost->bridge_publish(sHost->user, vars, requests);
+}
+
+void agb_host_bridge_values(const void *data, unsigned size)
+{
+    if (sHost->bridge_values) sHost->bridge_values(sHost->user, data, size);
+}
+
+int agb_host_bridge_poll(char *name, unsigned name_cap, int *args, int max_args, int *nargs)
+{
+    return sHost->bridge_poll ? sHost->bridge_poll(sHost->user, name, name_cap, args, max_args, nargs) : 0;
+}
+
+void agb_host_bridge_done(int id, int result)
+{
+    if (sHost->bridge_done) sHost->bridge_done(sHost->user, id, result);
+}
